@@ -1,0 +1,15 @@
+instances:
+  - url: superserve.docs.buildwithfern.com
+
+title: Superserve
+
+navigation:
+  - api: API Reference
+    snippets:
+      typescript: "@superserve/sdk"
+      python: superserve
+
+colors:
+  accent-primary:
+    dark: "#60a5fa"
+    light: "#2563eb"
