@@ -1,0 +1,12 @@
+{
+  "name": "superserve-ts-example",
+  "private": true,
+  "scripts": {
+    "start": "tsx index.ts"
+  },
+  "dependencies": {
+    "@superserve/sdk": "../../sdks/typescript",
+    "tsx": "^4.19.0",
+    "typescript": "^5.5.0"
+  }
+}
