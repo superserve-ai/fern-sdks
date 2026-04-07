@@ -133,18 +133,21 @@ client = SuperserveApi(
 )
 ```
 
-### Running the examples against local
+### Running the examples with a custom environment
+
+Both examples support `SUPERSERVE_API_KEY` and `SUPERSERVE_API_URL` environment variables. By default they point to production.
 
 ```bash
-# TypeScript
-cd examples/typescript
-bun install
-SUPERSERVE_API_KEY=<key> SUPERSERVE_API_URL=http://localhost:8080 bun run start
+# TypeScript — against staging
+cd examples/typescript && bun install
+SUPERSERVE_API_KEY=<key> SUPERSERVE_API_URL=https://api-staging.superserve.ai bun run start
 
-# Python
-cd examples/python
-python3 -m venv .venv && .venv/bin/pip install -e ../../sdks/python
-SUPERSERVE_API_KEY=<key> SUPERSERVE_API_URL=http://localhost:8080 .venv/bin/python example.py
+# Python — against staging
+cd examples/python && python3 -m venv .venv && .venv/bin/pip install -e ../../sdks/python
+SUPERSERVE_API_KEY=<key> SUPERSERVE_API_URL=https://api-staging.superserve.ai .venv/bin/python example.py
+
+# Against local
+SUPERSERVE_API_KEY=<key> SUPERSERVE_API_URL=http://localhost:8080 bun run start
 ```
 
 ## Examples
