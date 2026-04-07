@@ -1,0 +1,11 @@
+pyproject.toml
+./__init__.py
+./_default_clients.py
+./client.py
+./environment.py
+superserve.egg-info/PKG-INFO
+superserve.egg-info/SOURCES.txt
+superserve.egg-info/dependency_links.txt
+superserve.egg-info/requires.txt
+superserve.egg-info/top_level.txt
+tests/test_aiohttp_autodetect.py

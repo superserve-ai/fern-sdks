@@ -1,0 +1,11 @@
+[project]
+name = "superserve"
+version = "0.1.0"
+requires-python = ">=3.9"
+dependencies = ["httpx>=0.24.0", "pydantic>=2.0.0"]
+
+[tool.setuptools]
+packages = ["superserve"]
+
+[tool.setuptools.package-dir]
+superserve = "."
