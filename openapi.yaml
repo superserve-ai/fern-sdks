@@ -514,9 +514,9 @@ components:
           format: int32
           minimum: 1
           maximum: 604800
-          description: 'Optional auto-pause timeout in seconds. The sandbox is paused once its current active session has run this long; each resume starts a fresh window. When unset, the sandbox stays active until explicitly paused. Also settable later via `PATCH /sandboxes/{sandbox_id}`. Maximum 604800 (7 days).
-
-            '
+          description: Optional auto-pause timeout in seconds. The sandbox is paused once its current active session
+            has run this long; each resume starts a fresh window. When unset, the sandbox stays active until explicitly
+            paused. Also settable later via `PATCH /sandboxes/{sandbox_id}`. Maximum 604800 (7 days).
         metadata:
           type: object
           additionalProperties:
@@ -553,7 +553,12 @@ components:
           format: date-time
         timeout_seconds:
           type: integer
-          description: Optional hard lifetime cap in seconds from sandbox creation.
+          format: int32
+          minimum: 1
+          maximum: 604800
+          description: Optional auto-pause timeout in seconds. The sandbox is paused once its current active session
+            has run this long; each resume starts a fresh window. When unset, the sandbox stays active until explicitly
+            paused. Also settable later via `PATCH /sandboxes/{sandbox_id}`. Maximum 604800 (7 days).
         network:
           $ref: '#/components/schemas/NetworkConfig'
         metadata:

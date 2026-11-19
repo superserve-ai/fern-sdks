@@ -28,7 +28,7 @@ class SandboxResponse(UniversalBaseModel):
     created_at: typing.Optional[dt.datetime] = None
     timeout_seconds: typing.Optional[int] = pydantic.Field(default=None)
     """
-    Optional hard lifetime cap in seconds from sandbox creation.
+    Optional auto-pause timeout in seconds. The sandbox is paused once its current active session has run this long; each resume starts a fresh window. When unset, the sandbox stays active until explicitly paused. Also settable later via `PATCH /sandboxes/{sandbox_id}`. Maximum 604800 (7 days).
     """
 
     network: typing.Optional[NetworkConfig] = None

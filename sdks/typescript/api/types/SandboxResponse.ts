@@ -13,7 +13,7 @@ export interface SandboxResponse {
     /** ID of the latest snapshot (present after a pause). */
     snapshot_id?: string | undefined;
     created_at?: string | undefined;
-    /** Optional hard lifetime cap in seconds from sandbox creation. */
+    /** Optional auto-pause timeout in seconds. The sandbox is paused once its current active session has run this long; each resume starts a fresh window. When unset, the sandbox stays active until explicitly paused. Also settable later via `PATCH /sandboxes/{sandbox_id}`. Maximum 604800 (7 days). */
     timeout_seconds?: number | undefined;
     network?: SuperserveApi.NetworkConfig | undefined;
     /** User-supplied string tags attached at creation. */

@@ -1,6 +1,7 @@
 import asyncio
 import datetime as dt
 import json
+from importlib.metadata import version
 
 import httpx
 import pytest
@@ -45,6 +46,7 @@ def test_metrics_request_and_nullable_observations():
     assert requests[0].method == "GET"
     assert requests[0].url.path == f"/sandboxes/{SANDBOX_ID}/metrics"
     assert requests[0].headers["X-API-Key"] == "test-key"
+    assert requests[0].headers["User-Agent"] == f"superserve/{version('superserve')}"
 
 
 def test_async_metrics_supports_same_response_contract():

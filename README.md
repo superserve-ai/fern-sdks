@@ -178,10 +178,10 @@ SDKs are auto-generated from `openapi.yaml` using [Fern](https://buildwithfern.c
 
 ```bash
 # Regenerate TypeScript SDK
-cd fern && fern generate --group local
+cd fern && fern generate --local --group local --version 0.1.0
 
 # Regenerate Python SDK
-cd fern && fern generate --group python-sdk
+cd fern && fern generate --local --group python-sdk --version 0.1.0
 
 # Preview API docs locally
 cd fern && fern docs dev
