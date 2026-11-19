@@ -38,7 +38,7 @@ client.system.health()
 <dd>
 
 **request_options:** `typing.Optional[RequestOptions]` — Request-specific configuration.
-    
+
 </dd>
 </dl>
 </dd>
@@ -62,16 +62,7 @@ client.system.health()
 <dl>
 <dd>
 
-Returns sandboxes belonging to the authenticated team, optionally
-filtered by metadata tags.
-
-## Filtering by metadata
-
-Any query parameter prefixed `metadata.` is treated as a filter
-clause: `?metadata.env=prod&metadata.owner=agent-7`. Multiple
-filters AND together — a sandbox matches only if every key/value
-pair is present in its metadata. Values are compared as exact
-strings; there is no type coercion or substring matching.
+Return the team's sandboxes, optionally filtered by metadata.
 </dd>
 </dl>
 </dd>
@@ -110,12 +101,8 @@ client.sandboxes.list_sandboxes()
 <dl>
 <dd>
 
-**metadata_key:** `typing.Optional[str]` 
+**metadata_key:** `typing.Optional[str]` — Exact string-value metadata filter; repeat different keys to combine filters.
 
-Filter sandboxes whose metadata contains an exact `{key}: <value>`
-pair. Repeat with different keys to AND multiple filters. Values
-are always strings. Example: `?metadata.env=prod`.
-    
 </dd>
 </dl>
 
@@ -123,7 +110,7 @@ are always strings. Example: `?metadata.env=prod`.
 <dd>
 
 **request_options:** `typing.Optional[RequestOptions]` — Request-specific configuration.
-    
+
 </dd>
 </dl>
 </dd>
@@ -190,7 +177,7 @@ client.sandboxes.create_sandbox(
 <dd>
 
 **name:** `str` — Human-readable name for the sandbox.
-    
+
 </dd>
 </dl>
 
@@ -198,30 +185,38 @@ client.sandboxes.create_sandbox(
 <dd>
 
 **from_snapshot:** `typing.Optional[str]` — If provided, boot the sandbox from this snapshot instead of creating a fresh VM. The snapshot must belong to the same team.
-    
+
 </dd>
 </dl>
 
 <dl>
 <dd>
 
-**allow_internet_access:** `typing.Optional[bool]` — Convenience toggle for outbound internet access. When false and no `network.deny_out` is provided, the sandbox is created with `deny_out: ["0.0.0.0/0"]` and cannot reach any public IP. An explicit `network` field always wins over this flag, so use `network` for fine-grained allow/deny lists.
-    
+**network:** `typing.Optional[NetworkConfig]`
+
 </dd>
 </dl>
 
 <dl>
 <dd>
 
-**timeout_seconds:** `typing.Optional[int]` — Optional hard lifetime cap in seconds, measured from sandbox creation. When set, the sandbox is destroyed this many seconds after creation regardless of state (active, paused, idle) or activity — the user asked for a hard deadline. When unset, the sandbox lives until explicitly paused or deleted. Maximum 604800 (7 days).
-    
+**allow_internet_access:** `typing.Optional[bool]` — Convenience toggle for outbound internet access. Explicit network rules take precedence.
+
 </dd>
 </dl>
 
 <dl>
 <dd>
 
-**metadata:** `typing.Optional[typing.Dict[str, str]]` 
+**timeout_seconds:** `typing.Optional[int]` — Optional auto-pause timeout in seconds. The sandbox is paused once its current active session has run this long; each resume starts a fresh window. When unset, the sandbox stays active until explicitly paused. Also settable later via `PATCH /sandboxes/{sandbox_id}`. Maximum 604800 (7 days).
+
+</dd>
+</dl>
+
+<dl>
+<dd>
+
+**metadata:** `typing.Optional[typing.Dict[str, str]]`
 
 Flat string-to-string tags attached to the sandbox at creation.
 Useful for grouping, owner labels, environment, run IDs, etc.
@@ -237,23 +232,10 @@ Useful for grouping, owner labels, environment, run IDs, etc.
   - Keys starting with `superserve.` or `_superserve` (case-
     insensitive) are reserved for platform use and rejected.
 
-## Lifecycle
-Metadata is **immutable** after creation. There is no
-`PATCH /sandboxes/:id/metadata` endpoint by design — if you
-need mutability, delete and recreate the sandbox, or open an
-issue with your use case.
-
+Metadata can be updated after creation via `PATCH /sandboxes/:id`.
 Filter sandboxes by metadata via the `metadata.{key}` query
 parameter on `GET /sandboxes`.
-    
-</dd>
-</dl>
 
-<dl>
-<dd>
-
-**network:** `typing.Optional[NetworkConfig]` 
-    
 </dd>
 </dl>
 
@@ -261,7 +243,7 @@ parameter on `GET /sandboxes`.
 <dd>
 
 **request_options:** `typing.Optional[RequestOptions]` — Request-specific configuration.
-    
+
 </dd>
 </dl>
 </dd>
@@ -312,7 +294,7 @@ client.sandboxes.get_sandbox(
 <dd>
 
 **sandbox_id:** `str` — The unique identifier of the sandbox.
-    
+
 </dd>
 </dl>
 
@@ -320,7 +302,7 @@ client.sandboxes.get_sandbox(
 <dd>
 
 **request_options:** `typing.Optional[RequestOptions]` — Request-specific configuration.
-    
+
 </dd>
 </dl>
 </dd>
@@ -371,7 +353,7 @@ client.sandboxes.delete_sandbox(
 <dd>
 
 **sandbox_id:** `str` — The unique identifier of the sandbox.
-    
+
 </dd>
 </dl>
 
@@ -379,7 +361,7 @@ client.sandboxes.delete_sandbox(
 <dd>
 
 **request_options:** `typing.Optional[RequestOptions]` — Request-specific configuration.
-    
+
 </dd>
 </dl>
 </dd>
@@ -468,19 +450,19 @@ client.sandboxes.patch_sandbox(
 <dd>
 
 **sandbox_id:** `str` — The unique identifier of the sandbox.
-    
+
 </dd>
 </dl>
 
 <dl>
 <dd>
 
-**network:** `typing.Optional[NetworkConfig]` 
+**network:** `typing.Optional[NetworkConfig]`
 
 Replace the sandbox's egress rules. The sandbox must be in
 the `active` state. The provided `allow_out` and `deny_out`
 lists fully replace whatever was previously configured.
-    
+
 </dd>
 </dl>
 
@@ -488,7 +470,7 @@ lists fully replace whatever was previously configured.
 <dd>
 
 **request_options:** `typing.Optional[RequestOptions]` — Request-specific configuration.
-    
+
 </dd>
 </dl>
 </dd>
@@ -555,7 +537,7 @@ client.sandboxes.pause_sandbox(
 <dd>
 
 **sandbox_id:** `str` — The unique identifier of the sandbox.
-    
+
 </dd>
 </dl>
 
@@ -563,7 +545,7 @@ client.sandboxes.pause_sandbox(
 <dd>
 
 **request_options:** `typing.Optional[RequestOptions]` — Request-specific configuration.
-    
+
 </dd>
 </dl>
 </dd>
@@ -629,7 +611,7 @@ client.sandboxes.resume_sandbox(
 <dd>
 
 **sandbox_id:** `str` — The unique identifier of the sandbox.
-    
+
 </dd>
 </dl>
 
@@ -637,7 +619,99 @@ client.sandboxes.resume_sandbox(
 <dd>
 
 **request_options:** `typing.Optional[RequestOptions]` — Request-specific configuration.
-    
+
+</dd>
+</dl>
+</dd>
+</dl>
+
+
+</dd>
+</dl>
+</details>
+
+<details><summary><code>client.sandboxes.<a href="src/superserve/sandboxes/client.py">get_sandbox_metrics</a>(...) -> SandboxMetrics</code></summary>
+<dl>
+<dd>
+
+#### 📝 Description
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+Returns raw CPU, memory, and guest root filesystem measurements for a
+sandbox the caller may read. This authenticated JSON endpoint is separate
+from the operational Prometheus `/metrics` endpoint.
+
+Poll every 15–30 seconds and honor the existing API rate limits. Polling
+does not collect a new sample. Each resource has its own observation time;
+values may be stale or absent, including with older guest versions.
+Missing usage is `null`, never a fabricated zero. No utilization
+percentages are calculated.
+
+`source: live` means an observation came from the accepted current
+runtime's cache, not that it was freshly collected. `source: last_known`
+identifies a retained observation. Paused, failed, and other inactive
+states use only retained measurements without a live resource request.
+Measurements and persistence never delay sandbox lifecycle operations.
+
+Configured allocations and limits are current control-plane facts and
+are separate from observations. A resize does not recompute or retimestamp
+earlier usage. Effective CPU and memory allocations are returned only
+when confirmed for the live runtime; otherwise they are `null`.
+</dd>
+</dl>
+</dd>
+</dl>
+
+#### 🔌 Usage
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+```python
+from superserve import SuperserveApi
+from superserve.environment import SuperserveApiEnvironment
+
+client = SuperserveApi(
+    api_key="<value>",
+    environment=SuperserveApiEnvironment.PRODUCTION,
+)
+
+client.sandboxes.get_sandbox_metrics(
+    sandbox_id="sandbox_id",
+)
+
+```
+</dd>
+</dl>
+</dd>
+</dl>
+
+#### ⚙️ Parameters
+
+<dl>
+<dd>
+
+<dl>
+<dd>
+
+**sandbox_id:** `PublicSandboxId` — The unique identifier of the sandbox.
+
+</dd>
+</dl>
+
+<dl>
+<dd>
+
+**request_options:** `typing.Optional[RequestOptions]` — Request-specific configuration.
+
 </dd>
 </dl>
 </dd>
@@ -706,15 +780,15 @@ client.exec.command(
 <dd>
 
 **sandbox_id:** `str` — The unique identifier of the sandbox.
-    
+
 </dd>
 </dl>
 
 <dl>
 <dd>
 
-**request:** `ExecRequest` 
-    
+**request:** `ExecRequest`
+
 </dd>
 </dl>
 
@@ -722,7 +796,7 @@ client.exec.command(
 <dd>
 
 **request_options:** `typing.Optional[RequestOptions]` — Request-specific configuration.
-    
+
 </dd>
 </dl>
 </dd>
@@ -790,15 +864,15 @@ client.exec.command_stream(
 <dd>
 
 **sandbox_id:** `str` — The unique identifier of the sandbox.
-    
+
 </dd>
 </dl>
 
 <dl>
 <dd>
 
-**request:** `ExecRequest` 
-    
+**request:** `ExecRequest`
+
 </dd>
 </dl>
 
@@ -806,7 +880,7 @@ client.exec.command_stream(
 <dd>
 
 **request_options:** `typing.Optional[RequestOptions]` — Request-specific configuration.
-    
+
 </dd>
 </dl>
 </dd>
@@ -873,7 +947,7 @@ client.files.download_file(
 <dd>
 
 **sandbox_id:** `str` — The unique identifier of the sandbox.
-    
+
 </dd>
 </dl>
 
@@ -881,7 +955,7 @@ client.files.download_file(
 <dd>
 
 **path:** `str` — File path inside the sandbox (without leading slash).
-    
+
 </dd>
 </dl>
 
@@ -889,7 +963,7 @@ client.files.download_file(
 <dd>
 
 **request_options:** `typing.Optional[RequestOptions]` — Request-specific configuration.
-    
+
 </dd>
 </dl>
 </dd>
@@ -943,7 +1017,7 @@ client.files.upload_file(...)
 <dd>
 
 **sandbox_id:** `str` — The unique identifier of the sandbox.
-    
+
 </dd>
 </dl>
 
@@ -951,15 +1025,15 @@ client.files.upload_file(...)
 <dd>
 
 **path:** `str` — File path inside the sandbox (without leading slash).
-    
+
 </dd>
 </dl>
 
 <dl>
 <dd>
 
-**request:** `typing.Union[bytes, typing.Iterator[bytes], typing.AsyncIterator[bytes]]` 
-    
+**request:** `typing.Union[bytes, typing.Iterator[bytes], typing.AsyncIterator[bytes]]`
+
 </dd>
 </dl>
 
@@ -967,7 +1041,7 @@ client.files.upload_file(...)
 <dd>
 
 **request_options:** `typing.Optional[RequestOptions]` — Request-specific configuration.
-    
+
 </dd>
 </dl>
 </dd>

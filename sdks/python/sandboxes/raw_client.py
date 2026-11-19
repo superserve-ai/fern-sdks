@@ -13,11 +13,15 @@ from ..core.request_options import RequestOptions
 from ..core.serialization import convert_and_respect_annotation_metadata
 from ..errors.bad_request_error import BadRequestError
 from ..errors.conflict_error import ConflictError
+from ..errors.forbidden_error import ForbiddenError
 from ..errors.internal_server_error import InternalServerError
 from ..errors.not_found_error import NotFoundError
+from ..errors.too_many_requests_error import TooManyRequestsError
 from ..errors.unauthorized_error import UnauthorizedError
 from ..types.error import Error
 from ..types.network_config import NetworkConfig
+from ..types.public_sandbox_id import PublicSandboxId
+from ..types.sandbox_metrics import SandboxMetrics
 from ..types.sandbox_response import SandboxResponse
 from pydantic import ValidationError
 
@@ -33,23 +37,12 @@ class RawSandboxesClient:
         self, *, metadata_key: typing.Optional[str] = None, request_options: typing.Optional[RequestOptions] = None
     ) -> HttpResponse[typing.List[SandboxResponse]]:
         """
-        Returns sandboxes belonging to the authenticated team, optionally
-        filtered by metadata tags.
-
-        ## Filtering by metadata
-
-        Any query parameter prefixed `metadata.` is treated as a filter
-        clause: `?metadata.env=prod&metadata.owner=agent-7`. Multiple
-        filters AND together — a sandbox matches only if every key/value
-        pair is present in its metadata. Values are compared as exact
-        strings; there is no type coercion or substring matching.
+        Return the team's sandboxes, optionally filtered by metadata.
 
         Parameters
         ----------
         metadata_key : typing.Optional[str]
-            Filter sandboxes whose metadata contains an exact `{key}: <value>`
-            pair. Repeat with different keys to AND multiple filters. Values
-            are always strings. Example: `?metadata.env=prod`.
+            Exact string-value metadata filter; repeat different keys to combine filters.
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -124,10 +117,10 @@ class RawSandboxesClient:
         *,
         name: str,
         from_snapshot: typing.Optional[str] = OMIT,
+        network: typing.Optional[NetworkConfig] = OMIT,
         allow_internet_access: typing.Optional[bool] = OMIT,
         timeout_seconds: typing.Optional[int] = OMIT,
         metadata: typing.Optional[typing.Dict[str, str]] = OMIT,
-        network: typing.Optional[NetworkConfig] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> HttpResponse[SandboxResponse]:
         """
@@ -143,11 +136,13 @@ class RawSandboxesClient:
         from_snapshot : typing.Optional[str]
             If provided, boot the sandbox from this snapshot instead of creating a fresh VM. The snapshot must belong to the same team.
 
+        network : typing.Optional[NetworkConfig]
+
         allow_internet_access : typing.Optional[bool]
-            Convenience toggle for outbound internet access. When false and no `network.deny_out` is provided, the sandbox is created with `deny_out: ["0.0.0.0/0"]` and cannot reach any public IP. An explicit `network` field always wins over this flag, so use `network` for fine-grained allow/deny lists.
+            Convenience toggle for outbound internet access. Explicit network rules take precedence.
 
         timeout_seconds : typing.Optional[int]
-            Optional hard lifetime cap in seconds, measured from sandbox creation. When set, the sandbox is destroyed this many seconds after creation regardless of state (active, paused, idle) or activity — the user asked for a hard deadline. When unset, the sandbox lives until explicitly paused or deleted. Maximum 604800 (7 days).
+            Optional auto-pause timeout in seconds. The sandbox is paused once its current active session has run this long; each resume starts a fresh window. When unset, the sandbox stays active until explicitly paused. Also settable later via `PATCH /sandboxes/{sandbox_id}`. Maximum 604800 (7 days).
 
         metadata : typing.Optional[typing.Dict[str, str]]
             Flat string-to-string tags attached to the sandbox at creation.
@@ -164,16 +159,9 @@ class RawSandboxesClient:
               - Keys starting with `superserve.` or `_superserve` (case-
                 insensitive) are reserved for platform use and rejected.
 
-            ## Lifecycle
-            Metadata is **immutable** after creation. There is no
-            `PATCH /sandboxes/:id/metadata` endpoint by design — if you
-            need mutability, delete and recreate the sandbox, or open an
-            issue with your use case.
-
+            Metadata can be updated after creation via `PATCH /sandboxes/:id`.
             Filter sandboxes by metadata via the `metadata.{key}` query
             parameter on `GET /sandboxes`.
-
-        network : typing.Optional[NetworkConfig]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -189,12 +177,12 @@ class RawSandboxesClient:
             json={
                 "name": name,
                 "from_snapshot": from_snapshot,
-                "allow_internet_access": allow_internet_access,
-                "timeout_seconds": timeout_seconds,
-                "metadata": metadata,
                 "network": convert_and_respect_annotation_metadata(
                     object_=network, annotation=NetworkConfig, direction="write"
                 ),
+                "allow_internet_access": allow_internet_access,
+                "timeout_seconds": timeout_seconds,
+                "metadata": metadata,
             },
             headers={
                 "content-type": "application/json",
@@ -694,6 +682,123 @@ class RawSandboxesClient:
             )
         raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
 
+    def get_sandbox_metrics(
+        self, sandbox_id: PublicSandboxId, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> HttpResponse[SandboxMetrics]:
+        """
+        Returns raw CPU, memory, and guest root filesystem measurements for a
+        sandbox the caller may read. This authenticated JSON endpoint is separate
+        from the operational Prometheus `/metrics` endpoint.
+
+        Poll every 15–30 seconds and honor the existing API rate limits. Polling
+        does not collect a new sample. Each resource has its own observation time;
+        values may be stale or absent, including with older guest versions.
+        Missing usage is `null`, never a fabricated zero. No utilization
+        percentages are calculated.
+
+        `source: live` means an observation came from the accepted current
+        runtime's cache, not that it was freshly collected. `source: last_known`
+        identifies a retained observation. Paused, failed, and other inactive
+        states use only retained measurements without a live resource request.
+        Measurements and persistence never delay sandbox lifecycle operations.
+
+        Configured allocations and limits are current control-plane facts and
+        are separate from observations. A resize does not recompute or retimestamp
+        earlier usage. Effective CPU and memory allocations are returned only
+        when confirmed for the live runtime; otherwise they are `null`.
+
+        Parameters
+        ----------
+        sandbox_id : PublicSandboxId
+            The unique identifier of the sandbox.
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        HttpResponse[SandboxMetrics]
+            Current allocations and independently timestamped observations
+        """
+        _response = self._client_wrapper.httpx_client.request(
+            f"sandboxes/{jsonable_encoder(sandbox_id)}/metrics",
+            method="GET",
+            request_options=request_options,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                _data = typing.cast(
+                    SandboxMetrics,
+                    parse_obj_as(
+                        type_=SandboxMetrics,  # type: ignore
+                        object_=_response.json(),
+                    ),
+                )
+                return HttpResponse(response=_response, data=_data)
+            if _response.status_code == 401:
+                raise UnauthorizedError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        Error,
+                        parse_obj_as(
+                            type_=Error,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 403:
+                raise ForbiddenError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        Error,
+                        parse_obj_as(
+                            type_=Error,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 404:
+                raise NotFoundError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        Error,
+                        parse_obj_as(
+                            type_=Error,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 429:
+                raise TooManyRequestsError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        Error,
+                        parse_obj_as(
+                            type_=Error,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 500:
+                raise InternalServerError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        Error,
+                        parse_obj_as(
+                            type_=Error,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        except ValidationError as e:
+            raise ParsingError(
+                status_code=_response.status_code, headers=dict(_response.headers), body=_response.json(), cause=e
+            )
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
 
 class AsyncRawSandboxesClient:
     def __init__(self, *, client_wrapper: AsyncClientWrapper):
@@ -703,23 +808,12 @@ class AsyncRawSandboxesClient:
         self, *, metadata_key: typing.Optional[str] = None, request_options: typing.Optional[RequestOptions] = None
     ) -> AsyncHttpResponse[typing.List[SandboxResponse]]:
         """
-        Returns sandboxes belonging to the authenticated team, optionally
-        filtered by metadata tags.
-
-        ## Filtering by metadata
-
-        Any query parameter prefixed `metadata.` is treated as a filter
-        clause: `?metadata.env=prod&metadata.owner=agent-7`. Multiple
-        filters AND together — a sandbox matches only if every key/value
-        pair is present in its metadata. Values are compared as exact
-        strings; there is no type coercion or substring matching.
+        Return the team's sandboxes, optionally filtered by metadata.
 
         Parameters
         ----------
         metadata_key : typing.Optional[str]
-            Filter sandboxes whose metadata contains an exact `{key}: <value>`
-            pair. Repeat with different keys to AND multiple filters. Values
-            are always strings. Example: `?metadata.env=prod`.
+            Exact string-value metadata filter; repeat different keys to combine filters.
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -794,10 +888,10 @@ class AsyncRawSandboxesClient:
         *,
         name: str,
         from_snapshot: typing.Optional[str] = OMIT,
+        network: typing.Optional[NetworkConfig] = OMIT,
         allow_internet_access: typing.Optional[bool] = OMIT,
         timeout_seconds: typing.Optional[int] = OMIT,
         metadata: typing.Optional[typing.Dict[str, str]] = OMIT,
-        network: typing.Optional[NetworkConfig] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> AsyncHttpResponse[SandboxResponse]:
         """
@@ -813,11 +907,13 @@ class AsyncRawSandboxesClient:
         from_snapshot : typing.Optional[str]
             If provided, boot the sandbox from this snapshot instead of creating a fresh VM. The snapshot must belong to the same team.
 
+        network : typing.Optional[NetworkConfig]
+
         allow_internet_access : typing.Optional[bool]
-            Convenience toggle for outbound internet access. When false and no `network.deny_out` is provided, the sandbox is created with `deny_out: ["0.0.0.0/0"]` and cannot reach any public IP. An explicit `network` field always wins over this flag, so use `network` for fine-grained allow/deny lists.
+            Convenience toggle for outbound internet access. Explicit network rules take precedence.
 
         timeout_seconds : typing.Optional[int]
-            Optional hard lifetime cap in seconds, measured from sandbox creation. When set, the sandbox is destroyed this many seconds after creation regardless of state (active, paused, idle) or activity — the user asked for a hard deadline. When unset, the sandbox lives until explicitly paused or deleted. Maximum 604800 (7 days).
+            Optional auto-pause timeout in seconds. The sandbox is paused once its current active session has run this long; each resume starts a fresh window. When unset, the sandbox stays active until explicitly paused. Also settable later via `PATCH /sandboxes/{sandbox_id}`. Maximum 604800 (7 days).
 
         metadata : typing.Optional[typing.Dict[str, str]]
             Flat string-to-string tags attached to the sandbox at creation.
@@ -834,16 +930,9 @@ class AsyncRawSandboxesClient:
               - Keys starting with `superserve.` or `_superserve` (case-
                 insensitive) are reserved for platform use and rejected.
 
-            ## Lifecycle
-            Metadata is **immutable** after creation. There is no
-            `PATCH /sandboxes/:id/metadata` endpoint by design — if you
-            need mutability, delete and recreate the sandbox, or open an
-            issue with your use case.
-
+            Metadata can be updated after creation via `PATCH /sandboxes/:id`.
             Filter sandboxes by metadata via the `metadata.{key}` query
             parameter on `GET /sandboxes`.
-
-        network : typing.Optional[NetworkConfig]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -859,12 +948,12 @@ class AsyncRawSandboxesClient:
             json={
                 "name": name,
                 "from_snapshot": from_snapshot,
-                "allow_internet_access": allow_internet_access,
-                "timeout_seconds": timeout_seconds,
-                "metadata": metadata,
                 "network": convert_and_respect_annotation_metadata(
                     object_=network, annotation=NetworkConfig, direction="write"
                 ),
+                "allow_internet_access": allow_internet_access,
+                "timeout_seconds": timeout_seconds,
+                "metadata": metadata,
             },
             headers={
                 "content-type": "application/json",
@@ -1335,6 +1424,123 @@ class AsyncRawSandboxesClient:
                 )
             if _response.status_code == 409:
                 raise ConflictError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        Error,
+                        parse_obj_as(
+                            type_=Error,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 500:
+                raise InternalServerError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        Error,
+                        parse_obj_as(
+                            type_=Error,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            _response_json = _response.json()
+        except JSONDecodeError:
+            raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response.text)
+        except ValidationError as e:
+            raise ParsingError(
+                status_code=_response.status_code, headers=dict(_response.headers), body=_response.json(), cause=e
+            )
+        raise ApiError(status_code=_response.status_code, headers=dict(_response.headers), body=_response_json)
+
+    async def get_sandbox_metrics(
+        self, sandbox_id: PublicSandboxId, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> AsyncHttpResponse[SandboxMetrics]:
+        """
+        Returns raw CPU, memory, and guest root filesystem measurements for a
+        sandbox the caller may read. This authenticated JSON endpoint is separate
+        from the operational Prometheus `/metrics` endpoint.
+
+        Poll every 15–30 seconds and honor the existing API rate limits. Polling
+        does not collect a new sample. Each resource has its own observation time;
+        values may be stale or absent, including with older guest versions.
+        Missing usage is `null`, never a fabricated zero. No utilization
+        percentages are calculated.
+
+        `source: live` means an observation came from the accepted current
+        runtime's cache, not that it was freshly collected. `source: last_known`
+        identifies a retained observation. Paused, failed, and other inactive
+        states use only retained measurements without a live resource request.
+        Measurements and persistence never delay sandbox lifecycle operations.
+
+        Configured allocations and limits are current control-plane facts and
+        are separate from observations. A resize does not recompute or retimestamp
+        earlier usage. Effective CPU and memory allocations are returned only
+        when confirmed for the live runtime; otherwise they are `null`.
+
+        Parameters
+        ----------
+        sandbox_id : PublicSandboxId
+            The unique identifier of the sandbox.
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        AsyncHttpResponse[SandboxMetrics]
+            Current allocations and independently timestamped observations
+        """
+        _response = await self._client_wrapper.httpx_client.request(
+            f"sandboxes/{jsonable_encoder(sandbox_id)}/metrics",
+            method="GET",
+            request_options=request_options,
+        )
+        try:
+            if 200 <= _response.status_code < 300:
+                _data = typing.cast(
+                    SandboxMetrics,
+                    parse_obj_as(
+                        type_=SandboxMetrics,  # type: ignore
+                        object_=_response.json(),
+                    ),
+                )
+                return AsyncHttpResponse(response=_response, data=_data)
+            if _response.status_code == 401:
+                raise UnauthorizedError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        Error,
+                        parse_obj_as(
+                            type_=Error,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 403:
+                raise ForbiddenError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        Error,
+                        parse_obj_as(
+                            type_=Error,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 404:
+                raise NotFoundError(
+                    headers=dict(_response.headers),
+                    body=typing.cast(
+                        Error,
+                        parse_obj_as(
+                            type_=Error,  # type: ignore
+                            object_=_response.json(),
+                        ),
+                    ),
+                )
+            if _response.status_code == 429:
+                raise TooManyRequestsError(
                     headers=dict(_response.headers),
                     body=typing.cast(
                         Error,

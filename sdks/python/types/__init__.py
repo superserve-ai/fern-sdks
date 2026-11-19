@@ -12,6 +12,16 @@ if typing.TYPE_CHECKING:
     from .exec_result import ExecResult
     from .exec_stream_event import ExecStreamEvent
     from .network_config import NetworkConfig
+    from .public_sandbox_id import PublicSandboxId
+    from .sandbox_cpu_metrics import SandboxCpuMetrics
+    from .sandbox_cpu_metrics_usage import SandboxCpuMetricsUsage
+    from .sandbox_disk_metrics import SandboxDiskMetrics
+    from .sandbox_disk_metrics_usage import SandboxDiskMetricsUsage
+    from .sandbox_measurement_source import SandboxMeasurementSource
+    from .sandbox_memory_metrics import SandboxMemoryMetrics
+    from .sandbox_memory_metrics_usage import SandboxMemoryMetricsUsage
+    from .sandbox_metrics import SandboxMetrics
+    from .sandbox_metrics_status import SandboxMetricsStatus
     from .sandbox_response import SandboxResponse
     from .sandbox_response_status import SandboxResponseStatus
 _dynamic_imports: typing.Dict[str, str] = {
@@ -21,6 +31,16 @@ _dynamic_imports: typing.Dict[str, str] = {
     "ExecResult": ".exec_result",
     "ExecStreamEvent": ".exec_stream_event",
     "NetworkConfig": ".network_config",
+    "PublicSandboxId": ".public_sandbox_id",
+    "SandboxCpuMetrics": ".sandbox_cpu_metrics",
+    "SandboxCpuMetricsUsage": ".sandbox_cpu_metrics_usage",
+    "SandboxDiskMetrics": ".sandbox_disk_metrics",
+    "SandboxDiskMetricsUsage": ".sandbox_disk_metrics_usage",
+    "SandboxMeasurementSource": ".sandbox_measurement_source",
+    "SandboxMemoryMetrics": ".sandbox_memory_metrics",
+    "SandboxMemoryMetricsUsage": ".sandbox_memory_metrics_usage",
+    "SandboxMetrics": ".sandbox_metrics",
+    "SandboxMetricsStatus": ".sandbox_metrics_status",
     "SandboxResponse": ".sandbox_response",
     "SandboxResponseStatus": ".sandbox_response_status",
 }
@@ -54,6 +74,16 @@ __all__ = [
     "ExecResult",
     "ExecStreamEvent",
     "NetworkConfig",
+    "PublicSandboxId",
+    "SandboxCpuMetrics",
+    "SandboxCpuMetricsUsage",
+    "SandboxDiskMetrics",
+    "SandboxDiskMetricsUsage",
+    "SandboxMeasurementSource",
+    "SandboxMemoryMetrics",
+    "SandboxMemoryMetricsUsage",
+    "SandboxMetrics",
+    "SandboxMetricsStatus",
     "SandboxResponse",
     "SandboxResponseStatus",
 ]

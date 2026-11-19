@@ -15,6 +15,11 @@ class SandboxResponse(UniversalBaseModel):
     status: typing.Optional[SandboxResponseStatus] = None
     vcpu_count: typing.Optional[int] = None
     memory_mib: typing.Optional[int] = None
+    ip_address: typing.Optional[str] = pydantic.Field(default=None)
+    """
+    IP address of the running VM (present when status is active).
+    """
+
     snapshot_id: typing.Optional[str] = pydantic.Field(default=None)
     """
     ID of the latest snapshot (present after a pause).
@@ -23,17 +28,13 @@ class SandboxResponse(UniversalBaseModel):
     created_at: typing.Optional[dt.datetime] = None
     timeout_seconds: typing.Optional[int] = pydantic.Field(default=None)
     """
-    Hard lifetime cap in seconds from creation, if set at creation time. Absent when no cap was configured.
+    Optional hard lifetime cap in seconds from sandbox creation.
     """
 
-    network: typing.Optional[NetworkConfig] = pydantic.Field(default=None)
-    """
-    Current egress allow/deny rules, if any have been configured. Absent when the sandbox uses default network settings.
-    """
-
+    network: typing.Optional[NetworkConfig] = None
     metadata: typing.Optional[typing.Dict[str, str]] = pydantic.Field(default=None)
     """
-    User-supplied tags attached at creation. Always present — sandboxes created without metadata return `{}` rather than being absent.
+    User-supplied string tags attached at creation.
     """
 
     if IS_PYDANTIC_V2:

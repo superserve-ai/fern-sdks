@@ -5,6 +5,8 @@ import typing
 from ..core.client_wrapper import AsyncClientWrapper, SyncClientWrapper
 from ..core.request_options import RequestOptions
 from ..types.network_config import NetworkConfig
+from ..types.public_sandbox_id import PublicSandboxId
+from ..types.sandbox_metrics import SandboxMetrics
 from ..types.sandbox_response import SandboxResponse
 from .raw_client import AsyncRawSandboxesClient, RawSandboxesClient
 
@@ -31,23 +33,12 @@ class SandboxesClient:
         self, *, metadata_key: typing.Optional[str] = None, request_options: typing.Optional[RequestOptions] = None
     ) -> typing.List[SandboxResponse]:
         """
-        Returns sandboxes belonging to the authenticated team, optionally
-        filtered by metadata tags.
-
-        ## Filtering by metadata
-
-        Any query parameter prefixed `metadata.` is treated as a filter
-        clause: `?metadata.env=prod&metadata.owner=agent-7`. Multiple
-        filters AND together — a sandbox matches only if every key/value
-        pair is present in its metadata. Values are compared as exact
-        strings; there is no type coercion or substring matching.
+        Return the team's sandboxes, optionally filtered by metadata.
 
         Parameters
         ----------
         metadata_key : typing.Optional[str]
-            Filter sandboxes whose metadata contains an exact `{key}: <value>`
-            pair. Repeat with different keys to AND multiple filters. Values
-            are always strings. Example: `?metadata.env=prod`.
+            Exact string-value metadata filter; repeat different keys to combine filters.
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -74,10 +65,10 @@ class SandboxesClient:
         *,
         name: str,
         from_snapshot: typing.Optional[str] = OMIT,
+        network: typing.Optional[NetworkConfig] = OMIT,
         allow_internet_access: typing.Optional[bool] = OMIT,
         timeout_seconds: typing.Optional[int] = OMIT,
         metadata: typing.Optional[typing.Dict[str, str]] = OMIT,
-        network: typing.Optional[NetworkConfig] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> SandboxResponse:
         """
@@ -93,11 +84,13 @@ class SandboxesClient:
         from_snapshot : typing.Optional[str]
             If provided, boot the sandbox from this snapshot instead of creating a fresh VM. The snapshot must belong to the same team.
 
+        network : typing.Optional[NetworkConfig]
+
         allow_internet_access : typing.Optional[bool]
-            Convenience toggle for outbound internet access. When false and no `network.deny_out` is provided, the sandbox is created with `deny_out: ["0.0.0.0/0"]` and cannot reach any public IP. An explicit `network` field always wins over this flag, so use `network` for fine-grained allow/deny lists.
+            Convenience toggle for outbound internet access. Explicit network rules take precedence.
 
         timeout_seconds : typing.Optional[int]
-            Optional hard lifetime cap in seconds, measured from sandbox creation. When set, the sandbox is destroyed this many seconds after creation regardless of state (active, paused, idle) or activity — the user asked for a hard deadline. When unset, the sandbox lives until explicitly paused or deleted. Maximum 604800 (7 days).
+            Optional auto-pause timeout in seconds. The sandbox is paused once its current active session has run this long; each resume starts a fresh window. When unset, the sandbox stays active until explicitly paused. Also settable later via `PATCH /sandboxes/{sandbox_id}`. Maximum 604800 (7 days).
 
         metadata : typing.Optional[typing.Dict[str, str]]
             Flat string-to-string tags attached to the sandbox at creation.
@@ -114,16 +107,9 @@ class SandboxesClient:
               - Keys starting with `superserve.` or `_superserve` (case-
                 insensitive) are reserved for platform use and rejected.
 
-            ## Lifecycle
-            Metadata is **immutable** after creation. There is no
-            `PATCH /sandboxes/:id/metadata` endpoint by design — if you
-            need mutability, delete and recreate the sandbox, or open an
-            issue with your use case.
-
+            Metadata can be updated after creation via `PATCH /sandboxes/:id`.
             Filter sandboxes by metadata via the `metadata.{key}` query
             parameter on `GET /sandboxes`.
-
-        network : typing.Optional[NetworkConfig]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -147,10 +133,10 @@ class SandboxesClient:
         _response = self._raw_client.create_sandbox(
             name=name,
             from_snapshot=from_snapshot,
+            network=network,
             allow_internet_access=allow_internet_access,
             timeout_seconds=timeout_seconds,
             metadata=metadata,
-            network=network,
             request_options=request_options,
         )
         return _response.data
@@ -343,6 +329,58 @@ class SandboxesClient:
         _response = self._raw_client.resume_sandbox(sandbox_id, request_options=request_options)
         return _response.data
 
+    def get_sandbox_metrics(
+        self, sandbox_id: PublicSandboxId, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> SandboxMetrics:
+        """
+        Returns raw CPU, memory, and guest root filesystem measurements for a
+        sandbox the caller may read. This authenticated JSON endpoint is separate
+        from the operational Prometheus `/metrics` endpoint.
+
+        Poll every 15–30 seconds and honor the existing API rate limits. Polling
+        does not collect a new sample. Each resource has its own observation time;
+        values may be stale or absent, including with older guest versions.
+        Missing usage is `null`, never a fabricated zero. No utilization
+        percentages are calculated.
+
+        `source: live` means an observation came from the accepted current
+        runtime's cache, not that it was freshly collected. `source: last_known`
+        identifies a retained observation. Paused, failed, and other inactive
+        states use only retained measurements without a live resource request.
+        Measurements and persistence never delay sandbox lifecycle operations.
+
+        Configured allocations and limits are current control-plane facts and
+        are separate from observations. A resize does not recompute or retimestamp
+        earlier usage. Effective CPU and memory allocations are returned only
+        when confirmed for the live runtime; otherwise they are `null`.
+
+        Parameters
+        ----------
+        sandbox_id : PublicSandboxId
+            The unique identifier of the sandbox.
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        SandboxMetrics
+            Current allocations and independently timestamped observations
+
+        Examples
+        --------
+        from superserve import SuperserveApi
+
+        client = SuperserveApi(
+            api_key="YOUR_API_KEY",
+        )
+        client.sandboxes.get_sandbox_metrics(
+            sandbox_id="sandbox_id",
+        )
+        """
+        _response = self._raw_client.get_sandbox_metrics(sandbox_id, request_options=request_options)
+        return _response.data
+
 
 class AsyncSandboxesClient:
     def __init__(self, *, client_wrapper: AsyncClientWrapper):
@@ -363,23 +401,12 @@ class AsyncSandboxesClient:
         self, *, metadata_key: typing.Optional[str] = None, request_options: typing.Optional[RequestOptions] = None
     ) -> typing.List[SandboxResponse]:
         """
-        Returns sandboxes belonging to the authenticated team, optionally
-        filtered by metadata tags.
-
-        ## Filtering by metadata
-
-        Any query parameter prefixed `metadata.` is treated as a filter
-        clause: `?metadata.env=prod&metadata.owner=agent-7`. Multiple
-        filters AND together — a sandbox matches only if every key/value
-        pair is present in its metadata. Values are compared as exact
-        strings; there is no type coercion or substring matching.
+        Return the team's sandboxes, optionally filtered by metadata.
 
         Parameters
         ----------
         metadata_key : typing.Optional[str]
-            Filter sandboxes whose metadata contains an exact `{key}: <value>`
-            pair. Repeat with different keys to AND multiple filters. Values
-            are always strings. Example: `?metadata.env=prod`.
+            Exact string-value metadata filter; repeat different keys to combine filters.
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -414,10 +441,10 @@ class AsyncSandboxesClient:
         *,
         name: str,
         from_snapshot: typing.Optional[str] = OMIT,
+        network: typing.Optional[NetworkConfig] = OMIT,
         allow_internet_access: typing.Optional[bool] = OMIT,
         timeout_seconds: typing.Optional[int] = OMIT,
         metadata: typing.Optional[typing.Dict[str, str]] = OMIT,
-        network: typing.Optional[NetworkConfig] = OMIT,
         request_options: typing.Optional[RequestOptions] = None,
     ) -> SandboxResponse:
         """
@@ -433,11 +460,13 @@ class AsyncSandboxesClient:
         from_snapshot : typing.Optional[str]
             If provided, boot the sandbox from this snapshot instead of creating a fresh VM. The snapshot must belong to the same team.
 
+        network : typing.Optional[NetworkConfig]
+
         allow_internet_access : typing.Optional[bool]
-            Convenience toggle for outbound internet access. When false and no `network.deny_out` is provided, the sandbox is created with `deny_out: ["0.0.0.0/0"]` and cannot reach any public IP. An explicit `network` field always wins over this flag, so use `network` for fine-grained allow/deny lists.
+            Convenience toggle for outbound internet access. Explicit network rules take precedence.
 
         timeout_seconds : typing.Optional[int]
-            Optional hard lifetime cap in seconds, measured from sandbox creation. When set, the sandbox is destroyed this many seconds after creation regardless of state (active, paused, idle) or activity — the user asked for a hard deadline. When unset, the sandbox lives until explicitly paused or deleted. Maximum 604800 (7 days).
+            Optional auto-pause timeout in seconds. The sandbox is paused once its current active session has run this long; each resume starts a fresh window. When unset, the sandbox stays active until explicitly paused. Also settable later via `PATCH /sandboxes/{sandbox_id}`. Maximum 604800 (7 days).
 
         metadata : typing.Optional[typing.Dict[str, str]]
             Flat string-to-string tags attached to the sandbox at creation.
@@ -454,16 +483,9 @@ class AsyncSandboxesClient:
               - Keys starting with `superserve.` or `_superserve` (case-
                 insensitive) are reserved for platform use and rejected.
 
-            ## Lifecycle
-            Metadata is **immutable** after creation. There is no
-            `PATCH /sandboxes/:id/metadata` endpoint by design — if you
-            need mutability, delete and recreate the sandbox, or open an
-            issue with your use case.
-
+            Metadata can be updated after creation via `PATCH /sandboxes/:id`.
             Filter sandboxes by metadata via the `metadata.{key}` query
             parameter on `GET /sandboxes`.
-
-        network : typing.Optional[NetworkConfig]
 
         request_options : typing.Optional[RequestOptions]
             Request-specific configuration.
@@ -495,10 +517,10 @@ class AsyncSandboxesClient:
         _response = await self._raw_client.create_sandbox(
             name=name,
             from_snapshot=from_snapshot,
+            network=network,
             allow_internet_access=allow_internet_access,
             timeout_seconds=timeout_seconds,
             metadata=metadata,
-            network=network,
             request_options=request_options,
         )
         return _response.data
@@ -729,4 +751,64 @@ class AsyncSandboxesClient:
         asyncio.run(main())
         """
         _response = await self._raw_client.resume_sandbox(sandbox_id, request_options=request_options)
+        return _response.data
+
+    async def get_sandbox_metrics(
+        self, sandbox_id: PublicSandboxId, *, request_options: typing.Optional[RequestOptions] = None
+    ) -> SandboxMetrics:
+        """
+        Returns raw CPU, memory, and guest root filesystem measurements for a
+        sandbox the caller may read. This authenticated JSON endpoint is separate
+        from the operational Prometheus `/metrics` endpoint.
+
+        Poll every 15–30 seconds and honor the existing API rate limits. Polling
+        does not collect a new sample. Each resource has its own observation time;
+        values may be stale or absent, including with older guest versions.
+        Missing usage is `null`, never a fabricated zero. No utilization
+        percentages are calculated.
+
+        `source: live` means an observation came from the accepted current
+        runtime's cache, not that it was freshly collected. `source: last_known`
+        identifies a retained observation. Paused, failed, and other inactive
+        states use only retained measurements without a live resource request.
+        Measurements and persistence never delay sandbox lifecycle operations.
+
+        Configured allocations and limits are current control-plane facts and
+        are separate from observations. A resize does not recompute or retimestamp
+        earlier usage. Effective CPU and memory allocations are returned only
+        when confirmed for the live runtime; otherwise they are `null`.
+
+        Parameters
+        ----------
+        sandbox_id : PublicSandboxId
+            The unique identifier of the sandbox.
+
+        request_options : typing.Optional[RequestOptions]
+            Request-specific configuration.
+
+        Returns
+        -------
+        SandboxMetrics
+            Current allocations and independently timestamped observations
+
+        Examples
+        --------
+        import asyncio
+
+        from superserve import AsyncSuperserveApi
+
+        client = AsyncSuperserveApi(
+            api_key="YOUR_API_KEY",
+        )
+
+
+        async def main() -> None:
+            await client.sandboxes.get_sandbox_metrics(
+                sandbox_id="sandbox_id",
+            )
+
+
+        asyncio.run(main())
+        """
+        _response = await self._raw_client.get_sandbox_metrics(sandbox_id, request_options=request_options)
         return _response.data

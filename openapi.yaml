@@ -62,6 +62,14 @@ paths:
       operationId: listSandboxes
       tags: [Sandboxes]
       summary: List all sandboxes
+      description: Return the team's sandboxes, optionally filtered by metadata.
+      parameters:
+        - name: metadata.{key}
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Exact string-value metadata filter; repeat different keys to combine filters.
       security:
         - apiKey: []
       responses:
@@ -73,6 +81,8 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/SandboxResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
         "401":
           $ref: "#/components/responses/Unauthorized"
         "500":
@@ -394,6 +404,65 @@ paths:
         "500":
           $ref: "#/components/responses/InternalError"
 
+  /sandboxes/{sandbox_id}/metrics:
+    parameters:
+      - $ref: "#/components/parameters/SandboxMetricsId"
+    get:
+      operationId: getSandboxMetrics
+      tags: [Sandboxes]
+      summary: Read cached sandbox resource measurements
+      description: |
+        Returns raw CPU, memory, and guest root filesystem measurements for a
+        sandbox the caller may read. This authenticated JSON endpoint is separate
+        from the operational Prometheus `/metrics` endpoint.
+
+        Poll every 15–30 seconds and honor the existing API rate limits. Polling
+        does not collect a new sample. Each resource has its own observation time;
+        values may be stale or absent, including with older guest versions.
+        Missing usage is `null`, never a fabricated zero. No utilization
+        percentages are calculated.
+
+        `source: live` means an observation came from the accepted current
+        runtime's cache, not that it was freshly collected. `source: last_known`
+        identifies a retained observation. Paused, failed, and other inactive
+        states use only retained measurements without a live resource request.
+        Measurements and persistence never delay sandbox lifecycle operations.
+
+        Configured allocations and limits are current control-plane facts and
+        are separate from observations. A resize does not recompute or retimestamp
+        earlier usage. Effective CPU and memory allocations are returned only
+        when confirmed for the live runtime; otherwise they are `null`.
+      security:
+        - apiKey: []
+      responses:
+        "200":
+          description: Current allocations and independently timestamped observations
+          headers:
+            RateLimit-Policy:
+              $ref: "#/components/headers/RateLimitPolicy"
+            RateLimit:
+              $ref: "#/components/headers/RateLimit"
+            RateLimit-Limit:
+              $ref: "#/components/headers/RateLimitLimit"
+            RateLimit-Remaining:
+              $ref: "#/components/headers/RateLimitRemaining"
+            RateLimit-Reset:
+              $ref: "#/components/headers/RateLimitReset"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SandboxMetrics"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "429":
+          $ref: "#/components/responses/TooManyRequests"
+        "500":
+          $ref: "#/components/responses/InternalError"
+
 components:
   securitySchemes:
     apiKey:
@@ -409,6 +478,14 @@ components:
       schema:
         type: string
         format: uuid
+      description: The unique identifier of the sandbox.
+
+    SandboxMetricsId:
+      name: sandbox_id
+      in: path
+      required: true
+      schema:
+        $ref: "#/components/schemas/PublicSandboxId"
       description: The unique identifier of the sandbox.
 
   schemas:
@@ -429,6 +506,25 @@ components:
             creating a fresh VM. The snapshot must belong to the same team.
         network:
           $ref: "#/components/schemas/NetworkConfig"
+        allow_internet_access:
+          type: boolean
+          description: Convenience toggle for outbound internet access. Explicit network rules take precedence.
+        timeout_seconds:
+          type: integer
+          format: int32
+          minimum: 1
+          maximum: 604800
+          description: 'Optional auto-pause timeout in seconds. The sandbox is paused once its current active session has run this long; each resume starts a fresh window. When unset, the sandbox stays active until explicitly paused. Also settable later via `PATCH /sandboxes/{sandbox_id}`. Maximum 604800 (7 days).
+
+            '
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          description: "Flat string-to-string tags attached to the sandbox at creation.\nUseful for grouping, owner labels, environment, run IDs, etc.\n\n## Constraints\n  - **Strings only.** Values must be strings. There is no type\n    coercion: `metadata.count=42` filters for the *string* \"42\".\n  - **At most 64 keys.**\n  - Each key may be at most **256 bytes**.\n  - Each value may be at most **2048 bytes** (2 KB).\n  - The serialized object may be at most **16384 bytes** (16 KB)\n    in total.\n  - Keys starting with `superserve.` or `_superserve` (case-\n    insensitive) are reserved for platform use and rejected.\n\nMetadata can be updated after creation via `PATCH /sandboxes/:id`.\nFilter sandboxes by metadata via the `metadata.{key}` query\nparameter on `GET /sandboxes`.\n"
+          example:
+            env: prod
+            owner: agent-7
 
     SandboxResponse:
       type: object
@@ -455,6 +551,16 @@ components:
         created_at:
           type: string
           format: date-time
+        timeout_seconds:
+          type: integer
+          description: Optional hard lifetime cap in seconds from sandbox creation.
+        network:
+          $ref: '#/components/schemas/NetworkConfig'
+        metadata:
+          type: object
+          additionalProperties:
+            type: string
+          description: User-supplied string tags attached at creation.
 
     ExecStreamEvent:
       type: object
@@ -573,6 +679,211 @@ components:
             message:
               type: string
 
+    PublicSandboxId:
+      type: string
+      pattern: '^(sb-[a-z0-9]+-)?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$'
+      description: >
+        Public sandbox ID: a bare UUID, or the region-tagged form
+        `sb-<region>-<uuid>` (e.g. `sb-use-1b4e28ba-…`). Treat as an opaque
+        string; the tagged form routes the request to the sandbox's home
+        region. Endpoints accept both forms interchangeably.
+
+    SandboxMetrics:
+      type: object
+      required:
+      - id
+      - status
+      - cpu
+      - memory
+      - disk
+      properties:
+        id:
+          $ref: '#/components/schemas/PublicSandboxId'
+        status:
+          type: string
+          enum:
+          - starting
+          - active
+          - pausing
+          - paused
+          - resuming
+          - migrating
+          - failed
+        cpu:
+          $ref: '#/components/schemas/SandboxCPUMetrics'
+        memory:
+          $ref: '#/components/schemas/SandboxMemoryMetrics'
+        disk:
+          $ref: '#/components/schemas/SandboxDiskMetrics'
+
+    SandboxCPUMetrics:
+      type: object
+      required:
+      - configured_vcpus
+      - effective_vcpus
+      - limit_vcpus
+      - usage
+      properties:
+        configured_vcpus:
+          type: number
+          description: Configured vCPU allocation; the baseline when dynamic CPU is enabled.
+        effective_vcpus:
+          type:
+          - number
+          - 'null'
+          description: Confirmed live runtime CPU allocation or quota in vCPUs; null when unknown or inactive.
+        limit_vcpus:
+          type: number
+          description: Configured enforced vCPU ceiling; equals configured_vcpus for fixed CPU allocation.
+        usage:
+          type:
+          - object
+          - 'null'
+          required:
+          - used_vcpus
+          - sampled_at
+          - window_seconds
+          - source
+          properties:
+            used_vcpus:
+              type: number
+              minimum: 0
+              description: 'Average host-accounted CPU time consumed per elapsed second over the actual sample
+                window, in vCPUs. The VM accounting group may include virtual machine monitor overhead. Not
+                a percentage or cumulative counter, and not clamped to a later allocation.
+
+                '
+            sampled_at:
+              type: string
+              format: date-time
+              description: Original observation window end, not the response time.
+            window_seconds:
+              type: number
+              exclusiveMinimum: 0
+              description: Actual elapsed CPU observation interval in seconds.
+            source:
+              $ref: '#/components/schemas/SandboxMeasurementSource'
+
+    SandboxMemoryMetrics:
+      type: object
+      required:
+      - configured_bytes
+      - effective_bytes
+      - limit_bytes
+      - usage
+      properties:
+        configured_bytes:
+          type: integer
+          format: int64
+          description: Configured initial memory allocation in bytes.
+        effective_bytes:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          description: Confirmed applied live memory allocation in bytes; null when unknown or inactive.
+        limit_bytes:
+          type: integer
+          format: int64
+          description: Enforced memory ceiling in bytes; equals configured_bytes for fixed memory.
+        usage:
+          type:
+          - object
+          - 'null'
+          required:
+          - used_bytes
+          - sampled_at
+          - source
+          properties:
+            used_bytes:
+              type: integer
+              format: int64
+              minimum: 0
+              description: 'Guest MemTotal minus MemAvailable from one observation, at MiB resolution converted
+                to bytes. Reclaimable cache counted as available is excluded. This is not host process RSS
+                or the configured memory allocation.
+
+                '
+            sampled_at:
+              type: string
+              format: date-time
+              description: Original guest memory observation time.
+            source:
+              $ref: '#/components/schemas/SandboxMeasurementSource'
+
+    SandboxDiskMetrics:
+      type: object
+      required:
+      - configured_bytes
+      - effective_bytes
+      - limit_bytes
+      - usage
+      properties:
+        configured_bytes:
+          type: integer
+          format: int64
+          description: Configured logical disk size in bytes.
+        effective_bytes:
+          type:
+          - integer
+          - 'null'
+          format: int64
+          description: 'Null when current applied disk geometry is not independently known. The observed root
+            filesystem capacity is usage.total_bytes and has its own timestamp; it is not a current resize
+            confirmation.
+
+            '
+        limit_bytes:
+          type: integer
+          format: int64
+          description: Configured logical disk size limit in bytes.
+        usage:
+          type:
+          - object
+          - 'null'
+          required:
+          - total_bytes
+          - used_bytes
+          - available_bytes
+          - sampled_at
+          - source
+          properties:
+            total_bytes:
+              type: integer
+              format: int64
+              minimum: 0
+              description: Guest root filesystem capacity from statfs, in bytes.
+            used_bytes:
+              type: integer
+              format: int64
+              minimum: 0
+              description: Total blocks minus free blocks, multiplied by block size.
+            available_bytes:
+              type: integer
+              format: int64
+              minimum: 0
+              description: 'Blocks available to an unprivileged guest user, in bytes. Reserved blocks mean
+                used_bytes plus available_bytes may differ from total_bytes. This is not host overlay or billed
+                retained storage.
+
+                '
+            sampled_at:
+              type: string
+              format: date-time
+              description: Original root filesystem observation time.
+            source:
+              $ref: '#/components/schemas/SandboxMeasurementSource'
+
+    SandboxMeasurementSource:
+      type: string
+      enum:
+      - live
+      - last_known
+      description: 'Observation provenance, not a freshness guarantee. live means the accepted current runtime''s
+        cache; last_known means retained data. Always inspect the resource''s sampled_at timestamp.
+
+        '
+
   responses:
     BadRequest:
       description: Invalid request
@@ -604,3 +915,150 @@ components:
         application/json:
           schema:
             $ref: "#/components/schemas/Error"
+
+    Forbidden:
+      headers:
+        RateLimit-Policy:
+          $ref: "#/components/headers/RateLimitPolicy"
+        RateLimit:
+          $ref: "#/components/headers/RateLimit"
+        RateLimit-Limit:
+          $ref: "#/components/headers/RateLimitLimit"
+        RateLimit-Remaining:
+          $ref: "#/components/headers/RateLimitRemaining"
+        RateLimit-Reset:
+          $ref: "#/components/headers/RateLimitReset"
+      description: Caller is authenticated but not allowed to perform the action
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+    TooManyRequests:
+      description: >
+        A limit was hit. Usually the caller's request budget is temporarily
+        exhausted: error code `rate_limited`, `Retry-After` present, and the
+        bucket refills continuously.
+
+
+        Some endpoints also return `429` for a limit of their own — too many
+        invitations, snapshots, templates or sandboxes — which is a different
+        thing entirely and may persist for much longer. Those carry no
+        `Retry-After`, and `Retry-After` is the signal to key on: the
+        `RateLimit-*` headers describe the request budget on every response,
+        so on one of these they are present, accurate about the budget, and
+        say nothing about the limit that actually refused the call. Do not
+        read `RateLimit-Reset` as the wait for a `429` that has no
+        `Retry-After`.
+      headers:
+        RateLimit-Policy:
+          $ref: "#/components/headers/RateLimitPolicy"
+        RateLimit:
+          $ref: "#/components/headers/RateLimit"
+        RateLimit-Limit:
+          $ref: "#/components/headers/RateLimitLimit"
+        RateLimit-Remaining:
+          $ref: "#/components/headers/RateLimitRemaining"
+        RateLimit-Reset:
+          $ref: "#/components/headers/RateLimitReset"
+        Retry-After:
+          schema:
+            type: integer
+          description: >
+            Seconds to wait before retrying. Present when the request budget
+            refused the call, absent when an endpoint's own limit did.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  headers:
+    RateLimitPolicy:
+      description: >
+        The budget that governs this request, as
+        `"<scope>";q=<quota>;w=<seconds>;burst=<burst>`: which bucket it was
+        charged against, how many requests that bucket sustains over the
+        window, and the most that may be spent at once.
+
+
+        Two buckets can refuse a request. Authenticated requests are
+        normally charged against the per-team budget (`"team"`), but every
+        request first passes a per-IP budget (`"ip"`) that blunts floods,
+        and one refused there never reaches the team bucket. Read the scope
+        rather than assuming which answered: behind a shared NAT or proxy it
+        can be the IP budget even for a team well under its own limit.
+      schema:
+        type: string
+
+    RateLimit:
+      description: >
+        What is left of the budget named by `RateLimit-Policy`, as
+        `"<scope>";r=<remaining>;t=<seconds>`: `r` requests may be spent
+        now, and `t` is the window that figure is good for.
+
+
+        `t` is a pacing window, not a refill timer: spend no more than `r`
+        within it, then read these headers again.
+
+
+        `t` is the moment the bucket is full on any response these headers
+        describe, with one exception: a `429` from the request budget
+        itself, where `r` is zero and `t` is the wait for the single token
+        you need, equal to `Retry-After`.
+
+
+        A `429` from an endpoint's own limit — too many snapshots,
+        templates, sandboxes — is not that case. It passed the request
+        budget, so `r` is whatever was left, `t` is the ordinary full-refill
+        wait, and no `Retry-After` is sent. Do not read these headers as the
+        wait for that limit; they describe the request budget, which is not
+        what refused the call.
+
+
+        This and `RateLimit-Policy` are the current form of these headers.
+        `RateLimit-Limit`, `RateLimit-Remaining` and `RateLimit-Reset` carry
+        the same numbers in the earlier form and are still sent, so existing
+        clients keep working; new clients should prefer these two.
+      schema:
+        type: string
+
+    RateLimitLimit:
+      description: >
+        Bucket capacity, in the same unit as `RateLimit-Remaining`. This is
+        the burst, not the per-second rate: the budget is a token bucket,
+        not a fixed window, so the sustained rate is in `RateLimit-Policy`.
+
+
+        Earlier form; `RateLimit-Policy` carries the same capacity as
+        `burst`.
+      schema:
+        type: integer
+
+    RateLimitRemaining:
+      description: >
+        Tokens left in the bucket after this request. Present on any
+        response, so a client can read its budget before starting a batch.
+      schema:
+        type: integer
+
+    RateLimitReset:
+      description: >
+        Seconds until the bucket is full again from where it stands. Not a
+        window boundary; there is no window. Never below 1.
+
+
+        This is not `Retry-After`. On a request-budget `429`, `Retry-After`
+        is when one more request may be sent and this is when the whole
+        budget is back; they differ by roughly the burst. Sleep on
+        `Retry-After` to send the next request, on this to restart a batch.
+
+
+        It is also not `t` in `RateLimit`, which is the shorter pacing
+        window on a `429` that the request budget itself produced. This
+        field is always the full-refill timer, whatever the response.
+
+
+        It always describes the request budget, which is not always what
+        refused a `429` — see the `429` response description.
+      schema:
+        type: integer

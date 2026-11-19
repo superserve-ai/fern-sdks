@@ -103,6 +103,21 @@ client.sandboxes.delete_sandbox(sandbox_id=sandbox.id)
 
 Authentication is via the `X-API-Key` header, passed as `apiKey` when creating the client.
 
+### Resource measurements
+
+On servers supporting `GET /sandboxes/{id}/metrics`, read cached measurements with
+`client.sandboxes.getSandboxMetrics({ sandbox_id: id })` in TypeScript or
+`client.sandboxes.get_sandbox_metrics(sandbox_id=id)` in Python. The async Python
+client exposes the same method.
+
+The response separates configured, effective, and limit allocations from raw CPU,
+memory, and guest filesystem usage. Each observation has its own timestamp;
+missing observations are `null` (`None` in Python). CPU usage is average vCPUs over
+`window_seconds`, memory is guest used bytes, and disk is root filesystem bytes.
+No utilization percentages are calculated. `live` describes sample provenance,
+not freshness. Paused and failed sandboxes may return last-known observations.
+Poll every 15–30 seconds, honor API rate limits, and inspect each timestamp.
+
 ### Environments
 
 | Environment | URL |

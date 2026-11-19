@@ -1,0 +1,6 @@
+pyproject.toml
+tests/**
+**/__pycache__/**
+superserve.egg-info/**
+README.md
+__pycache__/**

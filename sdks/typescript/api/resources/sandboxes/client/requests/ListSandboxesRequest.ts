@@ -5,10 +5,6 @@
  *     {}
  */
 export interface ListSandboxesRequest {
-    /**
-     * Filter sandboxes whose metadata contains an exact `{key}: <value>`
-     * pair. Repeat with different keys to AND multiple filters. Values
-     * are always strings. Example: `?metadata.env=prod`.
-     */
+    /** Exact string-value metadata filter; repeat different keys to combine filters. */
     "metadata.{key}"?: string;
 }

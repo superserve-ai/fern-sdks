@@ -13,9 +13,10 @@ export interface CreateSandboxRequest {
     name: string;
     /** If provided, boot the sandbox from this snapshot instead of creating a fresh VM. The snapshot must belong to the same team. */
     from_snapshot?: string;
-    /** Convenience toggle for outbound internet access. When false and no `network.deny_out` is provided, the sandbox is created with `deny_out: ["0.0.0.0/0"]` and cannot reach any public IP. An explicit `network` field always wins over this flag, so use `network` for fine-grained allow/deny lists. */
+    network?: SuperserveApi.NetworkConfig;
+    /** Convenience toggle for outbound internet access. Explicit network rules take precedence. */
     allow_internet_access?: boolean;
-    /** Optional hard lifetime cap in seconds, measured from sandbox creation. When set, the sandbox is destroyed this many seconds after creation regardless of state (active, paused, idle) or activity — the user asked for a hard deadline. When unset, the sandbox lives until explicitly paused or deleted. Maximum 604800 (7 days). */
+    /** Optional auto-pause timeout in seconds. The sandbox is paused once its current active session has run this long; each resume starts a fresh window. When unset, the sandbox stays active until explicitly paused. Also settable later via `PATCH /sandboxes/{sandbox_id}`. Maximum 604800 (7 days). */
     timeout_seconds?: number;
     /**
      * Flat string-to-string tags attached to the sandbox at creation.
@@ -32,15 +33,9 @@ export interface CreateSandboxRequest {
      *   - Keys starting with `superserve.` or `_superserve` (case-
      *     insensitive) are reserved for platform use and rejected.
      *
-     * ## Lifecycle
-     * Metadata is **immutable** after creation. There is no
-     * `PATCH /sandboxes/:id/metadata` endpoint by design — if you
-     * need mutability, delete and recreate the sandbox, or open an
-     * issue with your use case.
-     *
+     * Metadata can be updated after creation via `PATCH /sandboxes/:id`.
      * Filter sandboxes by metadata via the `metadata.{key}` query
      * parameter on `GET /sandboxes`.
      */
     metadata?: Record<string, string>;
-    network?: SuperserveApi.NetworkConfig;
 }

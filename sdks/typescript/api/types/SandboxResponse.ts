@@ -8,14 +8,15 @@ export interface SandboxResponse {
     status?: SandboxResponse.Status | undefined;
     vcpu_count?: number | undefined;
     memory_mib?: number | undefined;
+    /** IP address of the running VM (present when status is active). */
+    ip_address?: string | undefined;
     /** ID of the latest snapshot (present after a pause). */
     snapshot_id?: string | undefined;
     created_at?: string | undefined;
-    /** Hard lifetime cap in seconds from creation, if set at creation time. Absent when no cap was configured. */
+    /** Optional hard lifetime cap in seconds from sandbox creation. */
     timeout_seconds?: number | undefined;
-    /** Current egress allow/deny rules, if any have been configured. Absent when the sandbox uses default network settings. */
     network?: SuperserveApi.NetworkConfig | undefined;
-    /** User-supplied tags attached at creation. Always present — sandboxes created without metadata return `{}` rather than being absent. */
+    /** User-supplied string tags attached at creation. */
     metadata?: Record<string, string> | undefined;
 }
 

@@ -23,16 +23,7 @@ export class SandboxesClient {
     }
 
     /**
-     * Returns sandboxes belonging to the authenticated team, optionally
-     * filtered by metadata tags.
-     *
-     * ## Filtering by metadata
-     *
-     * Any query parameter prefixed `metadata.` is treated as a filter
-     * clause: `?metadata.env=prod&metadata.owner=agent-7`. Multiple
-     * filters AND together — a sandbox matches only if every key/value
-     * pair is present in its metadata. Values are compared as exact
-     * strings; there is no type coercion or substring matching.
+     * Return the team's sandboxes, optionally filtered by metadata.
      *
      * @param {SuperserveApi.ListSandboxesRequest} request
      * @param {SandboxesClient.RequestOptions} requestOptions - Request-specific configuration.
@@ -662,6 +653,124 @@ export class SandboxesClient {
             _response.rawResponse,
             "POST",
             "/sandboxes/{sandbox_id}/resume",
+        );
+    }
+
+    /**
+     * Returns raw CPU, memory, and guest root filesystem measurements for a
+     * sandbox the caller may read. This authenticated JSON endpoint is separate
+     * from the operational Prometheus `/metrics` endpoint.
+     *
+     * Poll every 15–30 seconds and honor the existing API rate limits. Polling
+     * does not collect a new sample. Each resource has its own observation time;
+     * values may be stale or absent, including with older guest versions.
+     * Missing usage is `null`, never a fabricated zero. No utilization
+     * percentages are calculated.
+     *
+     * `source: live` means an observation came from the accepted current
+     * runtime's cache, not that it was freshly collected. `source: last_known`
+     * identifies a retained observation. Paused, failed, and other inactive
+     * states use only retained measurements without a live resource request.
+     * Measurements and persistence never delay sandbox lifecycle operations.
+     *
+     * Configured allocations and limits are current control-plane facts and
+     * are separate from observations. A resize does not recompute or retimestamp
+     * earlier usage. Effective CPU and memory allocations are returned only
+     * when confirmed for the live runtime; otherwise they are `null`.
+     *
+     * @param {SuperserveApi.GetSandboxMetricsRequest} request
+     * @param {SandboxesClient.RequestOptions} requestOptions - Request-specific configuration.
+     *
+     * @throws {@link SuperserveApi.UnauthorizedError}
+     * @throws {@link SuperserveApi.ForbiddenError}
+     * @throws {@link SuperserveApi.NotFoundError}
+     * @throws {@link SuperserveApi.TooManyRequestsError}
+     * @throws {@link SuperserveApi.InternalServerError}
+     *
+     * @example
+     *     await client.sandboxes.getSandboxMetrics({
+     *         sandbox_id: "sandbox_id"
+     *     })
+     */
+    public getSandboxMetrics(
+        request: SuperserveApi.GetSandboxMetricsRequest,
+        requestOptions?: SandboxesClient.RequestOptions,
+    ): core.HttpResponsePromise<SuperserveApi.SandboxMetrics> {
+        return core.HttpResponsePromise.fromPromise(this.__getSandboxMetrics(request, requestOptions));
+    }
+
+    private async __getSandboxMetrics(
+        request: SuperserveApi.GetSandboxMetricsRequest,
+        requestOptions?: SandboxesClient.RequestOptions,
+    ): Promise<core.WithRawResponse<SuperserveApi.SandboxMetrics>> {
+        const { sandbox_id: sandboxId } = request;
+        const _authRequest: core.AuthRequest = await this._options.authProvider.getAuthRequest();
+        const _headers: core.Fetcher.Args["headers"] = mergeHeaders(
+            _authRequest.headers,
+            this._options?.headers,
+            requestOptions?.headers,
+        );
+        const _response = await core.fetcher({
+            url: core.url.join(
+                (await core.Supplier.get(this._options.baseUrl)) ??
+                    (await core.Supplier.get(this._options.environment)) ??
+                    environments.SuperserveApiEnvironment.Production,
+                `sandboxes/${core.url.encodePathParam(sandboxId)}/metrics`,
+            ),
+            method: "GET",
+            headers: _headers,
+            queryParameters: requestOptions?.queryParams,
+            timeoutMs: (requestOptions?.timeoutInSeconds ?? this._options?.timeoutInSeconds ?? 60) * 1000,
+            maxRetries: requestOptions?.maxRetries ?? this._options?.maxRetries,
+            abortSignal: requestOptions?.abortSignal,
+            fetchFn: this._options?.fetch,
+            logging: this._options.logging,
+        });
+        if (_response.ok) {
+            return { data: _response.body as SuperserveApi.SandboxMetrics, rawResponse: _response.rawResponse };
+        }
+
+        if (_response.error.reason === "status-code") {
+            switch (_response.error.statusCode) {
+                case 401:
+                    throw new SuperserveApi.UnauthorizedError(
+                        _response.error.body as SuperserveApi.Error_,
+                        _response.rawResponse,
+                    );
+                case 403:
+                    throw new SuperserveApi.ForbiddenError(
+                        _response.error.body as SuperserveApi.Error_,
+                        _response.rawResponse,
+                    );
+                case 404:
+                    throw new SuperserveApi.NotFoundError(
+                        _response.error.body as SuperserveApi.Error_,
+                        _response.rawResponse,
+                    );
+                case 429:
+                    throw new SuperserveApi.TooManyRequestsError(
+                        _response.error.body as SuperserveApi.Error_,
+                        _response.rawResponse,
+                    );
+                case 500:
+                    throw new SuperserveApi.InternalServerError(
+                        _response.error.body as SuperserveApi.Error_,
+                        _response.rawResponse,
+                    );
+                default:
+                    throw new errors.SuperserveApiError({
+                        statusCode: _response.error.statusCode,
+                        body: _response.error.body,
+                        rawResponse: _response.rawResponse,
+                    });
+            }
+        }
+
+        return handleNonStatusCodeError(
+            _response.error,
+            _response.rawResponse,
+            "GET",
+            "/sandboxes/{sandbox_id}/metrics",
         );
     }
 }
